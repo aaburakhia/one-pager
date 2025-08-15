@@ -1,7 +1,7 @@
 # app.py
 
 import streamlit as st
-import fitz  # PyMuPDF
+import pdfplumber  
 import os
 import requests
 
@@ -12,11 +12,15 @@ API_URL = "https://api.groq.com/openai/v1/chat/completions"
 # --- Core Functions ---
 
 def parse_pdf(file_stream):
-    """Extracts text from a PDF file stream, limiting the length for API calls."""
+    """Extracts text from a PDF file stream using pdfplumber."""
     text = ""
-    with fitz.open(stream=file_stream.read(), filetype="pdf") as doc:
-        for page in doc:
-            text += page.get_text()
+    # pdfplumber.open() can directly handle the Streamlit file uploader object
+    with pdfplumber.open(file_stream) as pdf:
+        for page in pdf.pages:
+            # Extract text from each page and add it to our string
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
     # Truncate text to a reasonable length to fit within API context limits
     return text[:15000]
 
@@ -27,8 +31,7 @@ def call_groq_api(prompt, paper_text):
         return None
 
     payload = {
-        # --- THIS IS THE UPGRADED LINE ---
-        "model": "llama3-70b-8192", # Using the more powerful 70B model
+        "model": "llama3-70b-8192",
         "messages": [
             {"role": "system", "content": "You are an expert research assistant specializing in synthesizing complex academic papers into clear, concise summaries. You are precise and adhere strictly to the user's requested format."},
             {"role": "user", "content": f"{prompt}\n\nHere is the paper's text:\n\n{paper_text}"}
@@ -47,7 +50,10 @@ def call_groq_api(prompt, paper_text):
 
 def generate_the_one_pager(paper_text):
     """Generates the structured summary by calling the LLM for each section."""
-    
+    if not paper_text:
+        st.error("Could not extract any text from the PDF. The file might be image-based or corrupted.")
+        return None
+
     st.info("Synthesizing with our top-tier model... this may take a moment.")
     
     with st.spinner("Identifying the core research question..."):
@@ -86,24 +92,20 @@ if not GROQ_API_KEY:
 uploaded_file = st.file_uploader("Upload a PDF to begin", type="pdf", label_visibility="collapsed")
 
 if uploaded_file and GROQ_API_KEY:
-    paper_text = parse_pdf(uploaded_file)
-    summary_data = generate_the_one_pager(paper_text)
+    summary_data = generate_the_one_pager(parse_pdf(uploaded_file))
 
-    st.header("🔬 The One Pager Summary")
-    st.markdown("---")
-
-    st.subheader("💡 Core Idea")
-    st.write(f"**Main Research Question:** {summary_data['core_idea']['question']}")
-    st.write(f"**Core Contribution:** {summary_data['core_idea']['contribution']}")
-    st.markdown("---")
-
-    st.subheader("🛠️ Methodology")
-    st.markdown(summary_data["methodology"])
-    st.markdown("---")
-
-    st.subheader("📈 Key Findings")
-    st.markdown(summary_data["key_findings"])
-    st.markdown("---")
-
-    st.subheader("🤔 Limitations & Open Questions")
-    st.markdown(summary_data["weaknesses"])
+    if summary_data:
+        st.header("🔬 The One Pager Summary")
+        st.markdown("---")
+        st.subheader("💡 Core Idea")
+        st.write(f"**Main Research Question:** {summary_data['core_idea']['question']}")
+        st.write(f"**Core Contribution:** {summary_data['core_idea']['contribution']}")
+        st.markdown("---")
+        st.subheader("🛠️ Methodology")
+        st.markdown(summary_data["methodology"])
+        st.markdown("---")
+        st.subheader("📈 Key Findings")
+        st.markdown(summary_data["key_findings"])
+        st.markdown("---")
+        st.subheader("🤔 Limitations & Open Questions")
+        st.markdown(summary_data["weaknesses"])
