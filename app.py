@@ -4,16 +4,33 @@ import streamlit as st
 import pdfplumber
 import os
 import requests
-import json # New import for handling structured data
+import json
 
 # --- Configuration ---
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# --- Core Functions ---
+# --- NEW: Custom CSS for the "Paper" Look ---
+def local_css():
+    st.markdown("""
+    <style>
+    .paper-container {
+        border: 1px solid #e0e0e0;
+        padding: 2rem;
+        border-radius: 10px;
+        background-color: #ffffff;
+        font-family: serif; /* More academic font */
+        line-height: 1.6;
+    }
+    .paper-container h2, .paper-container h3 {
+        border-bottom: 1px solid #e0e0e0;
+        padding-bottom: 5px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
+# --- Core Functions (No changes here) ---
 def parse_pdf(file_stream):
-    """Extracts text from a PDF file stream using pdfplumber."""
     text = ""
     try:
         with pdfplumber.open(file_stream) as pdf:
@@ -26,71 +43,56 @@ def parse_pdf(file_stream):
         st.error(f"Error reading the PDF file: {e}")
         return ""
 
-# --- THIS IS THE NEW, EFFICIENT FUNCTION ---
 def generate_the_one_pager(paper_text):
-    """Generates the structured summary with a single, efficient API call."""
     if not paper_text:
-        st.error("Could not extract any text from the PDF. The file might be image-based or corrupted.")
+        st.error("Could not extract any text from the PDF...")
         return None
 
     st.info("Synthesizing your One Pager... this may take a moment.")
 
-    # This single, detailed prompt asks for all sections in a structured JSON format.
+    # --- UPDATED PROMPT: Added "resources" key ---
     prompt = """
     Analyze the following academic paper text and generate a structured summary in JSON format.
-    The JSON object must contain the following keys: "question", "contribution", "methodology", "findings", "limitations".
+    The JSON object must contain the following keys: "question", "contribution", "methodology", "findings", "limitations", "resources".
     - "question": A single sentence stating the main research question.
     - "contribution": One or two sentences describing the paper's core contribution.
     - "methodology": A markdown bulleted list of the key methods and data sources.
     - "findings": A markdown numbered list of the 3-5 most important results.
-    - "limitations": A markdown bulleted list of the key limitations or weaknesses mentioned by the authors.
-
-    Do not include any text or explanations outside of the JSON object.
+    - "limitations": A markdown bulleted list of the key limitations mentioned by the authors.
+    - "resources": A markdown bulleted list of any links to datasets, code repositories, or external resources mentioned. If none are found, return "No specific resources were mentioned."
+    Do not include any text outside of the JSON object.
     """
-
-    payload = {
-        "model": "llama3-70b-8192",
-        "messages": [
-            {"role": "system", "content": "You are a research assistant that provides structured summaries in JSON format."},
-            {"role": "user", "content": f"{prompt}\n\nHere is the paper's text:\n\n{paper_text}"}
-        ],
-        "response_format": {"type": "json_object"} # Ask for JSON output
-    }
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    
+    payload = {"model": "llama3-70b-8192", "messages": [{"role": "system", "content": "You are a research assistant that provides structured summaries in JSON format."}, {"role": "user", "content": f"{prompt}\n\nHere is the paper's text:\n\n{paper_text}"}], "response_format": {"type": "json_object"}}
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     
     with st.spinner("Our AI is reading and analyzing the entire paper..."):
         response = requests.post(API_URL, headers=headers, json=payload)
 
     if response.status_code == 200:
         try:
-            # --- NEW: Parse the JSON response ---
             response_text = response.json()['choices'][0]['message']['content']
             summary_data = json.loads(response_text)
-            
-            # Reformat into the structure our UI expects
             return {
-                "core_idea": {
-                    "question": summary_data.get("question", "Not found"),
-                    "contribution": summary_data.get("contribution", "Not found")
-                },
+                "core_idea": {"question": summary_data.get("question", "Not found"), "contribution": summary_data.get("contribution", "Not found")},
                 "methodology": summary_data.get("methodology", "Not found"),
                 "key_findings": summary_data.get("findings", "Not found"),
-                "weaknesses": summary_data.get("limitations", "Not found")
+                "weaknesses": summary_data.get("limitations", "Not found"),
+                "resources": summary_data.get("resources", "Not found") # NEW
             }
         except (json.JSONDecodeError, KeyError) as e:
-            st.error(f"Error parsing the AI's response. The model may have returned an invalid format. Details: {e}")
+            st.error(f"Error parsing the AI's response. Details: {e}")
             return None
     else:
         st.error(f"API Error: {response.status_code} - {response.text}")
         return None
 
-# --- Streamlit App UI (No changes needed below this line) ---
+# --- UPDATED Streamlit App UI ---
 st.set_page_config(layout="wide", page_title="The One Pager")
 st.title("📄 The One Pager")
 st.markdown("##### Turn any dense academic paper into a structured, one-page summary.")
+
+local_css() # Apply our custom styles
 
 if not GROQ_API_KEY:
     st.warning("The Groq API key is not configured...", icon="⚠️")
@@ -101,17 +103,33 @@ if uploaded_file and GROQ_API_KEY:
     summary_data = generate_the_one_pager(parse_pdf(uploaded_file))
 
     if summary_data:
-        st.header("🔬 The One Pager Summary")
+        st.markdown('<div class="paper-container">', unsafe_allow_html=True) # Start of our custom container
+        
+        st.header("The One Pager Summary")
         st.markdown("---")
+        
+        # Core Idea spans the full width, like an abstract
         st.subheader("💡 Core Idea")
         st.write(f"**Main Research Question:** {summary_data['core_idea']['question']}")
         st.write(f"**Core Contribution:** {summary_data['core_idea']['contribution']}")
         st.markdown("---")
-        st.subheader("🛠️ Methodology")
-        st.markdown(summary_data["methodology"])
-        st.markdown("---")
-        st.subheader("📈 Key Findings")
-        st.markdown(summary_data["key_findings"])
-        st.markdown("---")
-        st.subheader("🤔 Limitations & Open Questions")
-        st.markdown(summary_data["weaknesses"])
+
+        # --- NEW: Two-column layout ---
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("🛠️ Methodology")
+            st.markdown(summary_data["methodology"])
+            st.markdown("---")
+            st.subheader("📈 Key Findings")
+            st.markdown(summary_data["key_findings"])
+        
+        with col2:
+            st.subheader("🤔 Limitations & Open Questions")
+            st.markdown(summary_data["weaknesses"])
+            st.markdown("---")
+            # --- NEW: Links & Datasets Section ---
+            st.subheader("🔗 Links & Datasets")
+            st.markdown(summary_data["resources"])
+
+        st.markdown('</div>', unsafe_allow_html=True) # End of our custom container
